@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import librosa
 import numpy as np
 
 
@@ -18,6 +17,8 @@ def load_audio(
     path = Path(audio_path)
     if not path.is_file():
         raise FileNotFoundError(f"Audio file does not exist: {path}")
+
+    import librosa
 
     audio, actual_rate = librosa.load(path, sr=sample_rate, mono=True)
     if audio.size == 0:
@@ -56,6 +57,8 @@ def log_mel_spectrogram(
     """Convert a waveform into a float32 log-Mel spectrogram."""
     if sample_rate <= 0 or n_mels <= 0 or n_fft <= 0 or hop_length <= 0:
         raise ValueError("spectrogram parameters must be positive")
+    import librosa
+
     spectrogram = librosa.feature.melspectrogram(
         y=np.asarray(audio, dtype=np.float32),
         sr=sample_rate,
