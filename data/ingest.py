@@ -65,3 +65,43 @@ def build_manifest(
             writer.writerows(records)
 
     return records
+
+
+def split_manifest(
+    records: Iterable[dict[str, str]],
+    validation_size: float = 0.15,
+    test_size: float = 0.15,
+    random_seed: int = 42,
+) -> dict[str, list[dict[str, str]]]:
+    """Split records into reproducible, label-stratified train/validation/test sets."""
+    if not 0 <= validation_size < 1 or not 0 <= test_size < 1:
+        raise ValueError("validation_size and test_size must be between 0 and 1")
+    if validation_size + test_size >= 1:
+        raise ValueError("validation_size + test_size must be less than 1")
+
+    import random
+    from collections import defaultdict
+
+    grouped: dict[str, list[dict[str, str]]] = defaultdict(list)
+    for record in records:
+        if "label" not in record or "audio_path" not in record:
+            raise ValueError("Every record must contain audio_path and label")
+        grouped[record["label"]].append(dict(record))
+
+    rng = random.Random(random_seed)
+    splits = {"train": [], "validation": [], "test": []}
+    for label_records in grouped.values():
+        rng.shuffle(label_records)
+        total = len(label_records)
+        test_count = round(total * test_size)
+        validation_count = round(total * validation_size)
+        test_records = label_records[:test_count]
+        validation_records = label_records[test_count : test_count + validation_count]
+        train_records = label_records[test_count + validation_count :]
+        splits["test"].extend(test_records)
+        splits["validation"].extend(validation_records)
+        splits["train"].extend(train_records)
+
+    for split_records in splits.values():
+        split_records.sort(key=lambda record: record["audio_path"])
+    return splits
