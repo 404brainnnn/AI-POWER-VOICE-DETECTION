@@ -65,3 +65,25 @@ def log_mel_spectrogram(
         power=2.0,
     )
     return librosa.power_to_db(spectrogram, ref=np.max).astype(np.float32)
+
+
+def preprocess_file(
+    audio_path: str | Path,
+    sample_rate: int = 16_000,
+    duration_seconds: float = 4.0,
+    n_mels: int = 128,
+    n_fft: int = 1024,
+    hop_length: int = 256,
+) -> np.ndarray:
+    """Load, normalize, fix length, and featurize one audio file."""
+    if duration_seconds <= 0:
+        raise ValueError("duration_seconds must be positive")
+    audio, actual_rate = load_audio(audio_path, sample_rate=sample_rate)
+    fixed_audio = pad_or_trim(audio, round(duration_seconds * actual_rate))
+    return log_mel_spectrogram(
+        normalize_audio(fixed_audio),
+        sample_rate=actual_rate,
+        n_mels=n_mels,
+        n_fft=n_fft,
+        hop_length=hop_length,
+    )
