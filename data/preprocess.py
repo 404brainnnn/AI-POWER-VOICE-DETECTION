@@ -23,3 +23,13 @@ def load_audio(
     if audio.size == 0:
         raise ValueError(f"Audio file contains no samples: {path}")
     return audio.astype(np.float32, copy=False), actual_rate
+
+
+def pad_or_trim(audio: np.ndarray, target_num_samples: int) -> np.ndarray:
+    """Return a copy of ``audio`` with exactly ``target_num_samples`` samples."""
+    if target_num_samples <= 0:
+        raise ValueError("target_num_samples must be positive")
+    samples = np.asarray(audio, dtype=np.float32).reshape(-1)
+    if samples.size >= target_num_samples:
+        return samples[:target_num_samples].copy()
+    return np.pad(samples, (0, target_num_samples - samples.size)).astype(np.float32)
