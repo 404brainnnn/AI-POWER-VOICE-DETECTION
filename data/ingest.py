@@ -39,3 +39,29 @@ def infer_label(audio_path: str | Path) -> str:
     raise ValueError(
         f"Could not infer a label for {audio_path}; place it under a real or deepfake directory"
     )
+
+
+def build_manifest(
+    dataset_dir: str | Path,
+    output_csv: str | Path | None = None,
+) -> list[dict[str, str]]:
+    """Build labeled records and optionally write them to a CSV manifest."""
+    root = Path(dataset_dir).resolve()
+    records: list[dict[str, str]] = []
+    for audio_path in discover_audio_files(root):
+        records.append(
+            {
+                "audio_path": audio_path.relative_to(root).as_posix(),
+                "label": infer_label(audio_path),
+            }
+        )
+
+    if output_csv is not None:
+        destination = Path(output_csv)
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        with destination.open("w", newline="", encoding="utf-8") as handle:
+            writer = csv.DictWriter(handle, fieldnames=["audio_path", "label"])
+            writer.writeheader()
+            writer.writerows(records)
+
+    return records
