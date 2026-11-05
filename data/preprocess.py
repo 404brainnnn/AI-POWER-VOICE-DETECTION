@@ -44,3 +44,24 @@ def normalize_audio(audio: np.ndarray, peak: float = 0.99) -> np.ndarray:
     if maximum == 0.0:
         return samples.copy()
     return (samples * (peak / maximum)).astype(np.float32)
+
+
+def log_mel_spectrogram(
+    audio: np.ndarray,
+    sample_rate: int = 16_000,
+    n_mels: int = 128,
+    n_fft: int = 1024,
+    hop_length: int = 256,
+) -> np.ndarray:
+    """Convert a waveform into a float32 log-Mel spectrogram."""
+    if sample_rate <= 0 or n_mels <= 0 or n_fft <= 0 or hop_length <= 0:
+        raise ValueError("spectrogram parameters must be positive")
+    spectrogram = librosa.feature.melspectrogram(
+        y=np.asarray(audio, dtype=np.float32),
+        sr=sample_rate,
+        n_mels=n_mels,
+        n_fft=n_fft,
+        hop_length=hop_length,
+        power=2.0,
+    )
+    return librosa.power_to_db(spectrogram, ref=np.max).astype(np.float32)
