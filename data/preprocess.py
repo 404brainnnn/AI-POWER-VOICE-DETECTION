@@ -33,3 +33,14 @@ def pad_or_trim(audio: np.ndarray, target_num_samples: int) -> np.ndarray:
     if samples.size >= target_num_samples:
         return samples[:target_num_samples].copy()
     return np.pad(samples, (0, target_num_samples - samples.size)).astype(np.float32)
+
+
+def normalize_audio(audio: np.ndarray, peak: float = 0.99) -> np.ndarray:
+    """Scale audio to a bounded peak amplitude while preserving silence."""
+    if peak <= 0:
+        raise ValueError("peak must be positive")
+    samples = np.asarray(audio, dtype=np.float32)
+    maximum = float(np.max(np.abs(samples), initial=0.0))
+    if maximum == 0.0:
+        return samples.copy()
+    return (samples * (peak / maximum)).astype(np.float32)
