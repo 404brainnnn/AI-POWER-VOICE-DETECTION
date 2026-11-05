@@ -25,3 +25,17 @@ def discover_audio_files(dataset_dir: str | Path) -> list[Path]:
         and path.suffix.lower() in SUPPORTED_AUDIO_EXTENSIONS
         and not any(part.startswith(".") for part in path.relative_to(root).parts)
     )
+
+
+def infer_label(audio_path: str | Path) -> str:
+    """Infer ``real`` or ``deepfake`` from a parent directory name."""
+    path = Path(audio_path)
+    for part in reversed(path.parts[:-1]):
+        name = part.lower().replace("_", "-").replace(" ", "-")
+        if name in REAL_LABEL_NAMES:
+            return "real"
+        if name in FAKE_LABEL_NAMES:
+            return "deepfake"
+    raise ValueError(
+        f"Could not infer a label for {audio_path}; place it under a real or deepfake directory"
+    )
