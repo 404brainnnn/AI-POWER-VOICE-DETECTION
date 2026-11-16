@@ -1,1 +1,10 @@
 env/
+/.venv/
+/env/
+__pycache__/
+*.py[cod]
+.env
+artifacts/
+reports/
+*.onnx
+*.pkl
