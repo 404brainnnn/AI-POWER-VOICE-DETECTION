@@ -1,4 +1,4 @@
-PYTHON ?= env/bin/python
+PYTHON ?= python
 PIP ?= $(PYTHON) -m pip
 install:
 	$(PIP) install -r requirements-core.txt
