@@ -5,3 +5,7 @@ fastapi
 mlflow
 zenml
 uvicorn
+librosa 
+torchaudio
+soundfile
+ffmpeg
