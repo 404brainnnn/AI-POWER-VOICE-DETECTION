@@ -1,0 +1,29 @@
+name: Build and publish GPU inference image
+
+on:
+  workflow_dispatch:
+    inputs:
+      aws_region: {required: true, default: us-east-1, type: string}
+      ecr_repository: {required: true, default: voice-clone-detector, type: string}
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-region: ${{ inputs.aws_region }}
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+      - uses: aws-actions/amazon-ecr-login@v2
+        id: login-ecr
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile
+          push: true
+          tags: ${{ steps.login-ecr.outputs.registry }}/${{ inputs.ecr_repository }}:${{ github.sha }}

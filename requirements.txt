@@ -1,11 +1,1 @@
-torch 
-scikit-learn
-numpy 
-fastapi
-mlflow
-zenml
-uvicorn
-librosa 
-torchaudio
-soundfile
-ffmpeg
+-r requirements-core.txt

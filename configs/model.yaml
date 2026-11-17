@@ -1,0 +1,17 @@
+seed: 42
+labels:
+  real: 0
+  ai: 1
+model:
+  name: baseline_cnn
+  backbone: lcnn
+  baseline:
+    sample_rate: 16000
+    n_fft: 512
+    win_length: 400
+    hop_length: 160
+    specaugment: true
+  xlsr:
+    model_name: facebook/wav2vec2-xls-r-300m
+    freeze_feature_extractor: true
+    truncate_layers: null
