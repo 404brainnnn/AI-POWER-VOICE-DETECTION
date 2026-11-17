@@ -3,6 +3,8 @@ from __future__ import annotations
 import argparse, json, time
 from pathlib import Path
 
+from _bootstrap import ROOT
+
 import numpy as np
 
 parser=argparse.ArgumentParser(); parser.add_argument("--torchscript"); parser.add_argument("--onnx"); parser.add_argument("--iterations",type=int,default=20); parser.add_argument("--sample-rate",type=int,default=16000); parser.add_argument("--output",default="artifacts/export_benchmark.json"); args=parser.parse_args()

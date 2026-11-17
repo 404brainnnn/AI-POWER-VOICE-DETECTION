@@ -3,6 +3,8 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
+from _bootstrap import ROOT
+
 import numpy as np
 
 from models.config import load_yaml_config

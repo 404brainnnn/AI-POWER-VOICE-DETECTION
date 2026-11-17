@@ -1,4 +1,5 @@
 import argparse
+from _bootstrap import ROOT
 from monitoring.tracking import log_run
 
 parser=argparse.ArgumentParser(); parser.add_argument("--experiment", default="voice-clone-dsp"); parser.add_argument("--roc-auc", type=float, required=True); args=parser.parse_args()
