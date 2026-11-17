@@ -27,11 +27,10 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt
-          pip install pytest
+          pip install -r requirements-core.txt -r requirements-ml.txt
 
       - name: Run tests
         run: python -m pytest -q
 
       - name: Build Docker image
-        run: docker build -f DockerFile -t noidea:ci .
+        run: docker build -f Dockerfile -t noidea:ci .

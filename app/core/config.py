@@ -15,6 +15,13 @@ class Settings:
         self.mongodb_database = os.getenv("MONGODB_DATABASE", "voice_clone_detector")
         self.mlflow_tracking_uri = os.getenv("MLFLOW_TRACKING_URI", "http://localhost:5000")
         self.allowed_origins = os.getenv("ALLOWED_ORIGINS", "http://localhost:3000")
+        self.model_checkpoint = os.getenv("MODEL_CHECKPOINT")
+        self.model_config_path = os.getenv("MODEL_CONFIG_PATH", "configs/model.yaml")
+        self.thresholds_path = os.getenv("THRESHOLDS_PATH", "artifacts/calibration/thresholds.json")
+        self.model_device = os.getenv("MODEL_DEVICE", "cuda")
+        self.max_batch_size = int(os.getenv("MAX_BATCH_SIZE", "8"))
+        self.max_batch_wait_ms = int(os.getenv("MAX_BATCH_WAIT_MS", "20"))
+        self.hide_raw_scores = os.getenv("HIDE_RAW_SCORES", "false").lower() == "true"
 
     @property
     def cors_origins(self) -> list[str]:

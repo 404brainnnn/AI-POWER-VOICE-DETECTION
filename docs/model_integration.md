@@ -9,3 +9,11 @@
 `models.neural.XLSRAASIST` lazily loads `facebook/wav2vec2-xls-r-300m`, learns a weighted sum across transformer hidden states, and applies a graph-attention temporal head. It supports feature-extractor freezing, layer truncation, and separate encoder/head learning rates. The Stage 1 tests construct a tiny local Wav2Vec2 configuration and do not download the 300M checkpoint.
 
 Model selection is a single YAML switch in `configs/model.yaml`; use `models.factory.build_detector(config)` after loading the YAML. Labels are `real=0` and `ai=1`.
+
+After training, export and benchmark without changing the service model interface:
+
+```bash
+python scripts/export_model.py --checkpoint artifacts/checkpoints/best.pt --format torchscript --output artifacts/model.pt
+python scripts/export_model.py --checkpoint artifacts/checkpoints/best.pt --format onnx --output artifacts/model.onnx
+python scripts/benchmark_exports.py --torchscript artifacts/model.pt --onnx artifacts/model.onnx
+```

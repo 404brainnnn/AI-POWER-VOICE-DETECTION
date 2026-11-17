@@ -1,22 +1,53 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 import time
 
 import numpy as np
-from fastapi import Depends, FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import Body, Depends, FastAPI, Header, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi.responses import PlainTextResponse
 from fastapi.middleware.cors import CORSMiddleware
 
 from .core.config import settings
-from .schemas import AnalyzeRequest, AlertResponse, DetectionResponse, SessionResponse, now
+from .schemas import AnalyzeRequest, AlertResponse, DetectionResponse, ScoreResponse, SessionResponse, now
 from .services import DetectionService
 from .core.security import require_api_key
 from monitoring.metrics import LatencyRegistry
+from audio.buffering import SlidingWindowGenerator
+from audio.ingestion import decode_pcm16
+from audio.vad import is_speech
+from inference.queue import BatchingInferenceQueue
+from monitoring.prometheus import metrics_text
 
 app = FastAPI(title="Voice Clone Impersonation Detector", version="0.1.0")
 app.add_middleware(CORSMiddleware, allow_origins=settings.cors_origins, allow_methods=["GET", "POST", "DELETE"], allow_headers=["*"])
 service = DetectionService(settings.default_sample_rate)
 latencies = LatencyRegistry()
+neural_runtime = None
+inference_queue = None
+startup_error = None
+request_count = 0
+tier_counts = {}
+latency_samples = []
+
+
+@app.on_event("startup")
+async def load_neural_runtime() -> None:
+    global neural_runtime, inference_queue, startup_error
+    if not settings.model_checkpoint: return
+    try:
+        from models.config import load_yaml_config
+        from inference.runtime import NeuralRuntime
+        if not Path(settings.model_checkpoint).is_file() or not Path(settings.thresholds_path).is_file(): raise FileNotFoundError("configured model checkpoint or thresholds file is missing")
+        neural_runtime=NeuralRuntime.from_checkpoint(load_yaml_config(settings.model_config_path),settings.model_checkpoint,settings.thresholds_path,settings.model_device,settings.default_sample_rate)
+        inference_queue=BatchingInferenceQueue(neural_runtime.predict_batch,settings.max_batch_size,settings.max_batch_wait_ms); await inference_queue.start()
+    except Exception as exc: startup_error=str(exc)
+
+
+@app.on_event("shutdown")
+async def stop_inference_queue() -> None:
+    if inference_queue: await inference_queue.stop()
 
 
 @app.get("/health")
@@ -25,6 +56,33 @@ def health() -> dict[str, str]: return {"status": "ok"}
 
 @app.get("/ready")
 def ready() -> dict[str, str]: return {"status": "ready", "deep_model": "not_configured"}
+
+
+@app.get("/healthz")
+def healthz() -> dict: return {"status": "ok"}
+
+
+@app.get("/readyz")
+def readyz() -> dict:
+    if settings.model_checkpoint and neural_runtime is None: raise HTTPException(503, startup_error or "model is not loaded")
+    return {"status": "ready", "model_loaded": neural_runtime is not None}
+
+
+@app.post("/score", response_model=ScoreResponse)
+async def score(payload: bytes = Body(..., media_type="application/octet-stream"), x_sample_rate: int = Header(16000), _: None = Depends(require_api_key)) -> ScoreResponse:
+    global request_count
+    request_count += 1
+    if inference_queue is None: raise HTTPException(503, "trained model runtime is not configured")
+    try: waveform,sample_rate=decode_pcm16(payload,x_sample_rate,settings.default_sample_rate)
+    except ValueError as exc: raise HTTPException(422,str(exc)) from exc
+    if len(waveform) != settings.default_sample_rate*3: raise HTTPException(422,"/score requires exactly 3 seconds of PCM16 audio")
+    result=await inference_queue.submit(waveform)
+    tier_counts[result["tier"]]=tier_counts.get(result["tier"],0)+1; latency_samples.append(result["latency_ms"])
+    return ScoreResponse(score=None if settings.hide_raw_scores else result["score"],tier=result["tier"],model_version=result["model_version"],latency_ms=result["latency_ms"])
+
+
+@app.get("/metrics", response_class=PlainTextResponse)
+def prometheus_metrics() -> str: return metrics_text(request_count,tier_counts,latency_samples)
 
 
 @app.get("/api/v1/system/status")
@@ -112,4 +170,22 @@ async def stream(websocket: WebSocket, session_id: str) -> None:
             if sample_rate != session.sample_rate: await websocket.send_json({"error": "sample rate mismatch"}); continue
             results = service.analyze(session, np.asarray(audio, dtype=np.float32))
             for item in results: await websocket.send_json({"session_id": session_id, "dsp_score": item["dsp_score"], "risk": item["decision"].posterior, "tier": item["decision"].tier, "mode": item["decision"].mode, "processing_latency_ms": item["latency_ms"]})
+    except WebSocketDisconnect: pass
+
+
+@app.websocket("/stream")
+async def neural_stream(websocket: WebSocket) -> None:
+    await websocket.accept()
+    if inference_queue is None:
+        await websocket.send_json({"error":"trained model runtime is not configured"}); await websocket.close(code=1013); return
+    sample_rate=int(websocket.headers.get("x-sample-rate",settings.default_sample_rate)); windows=SlidingWindowGenerator(settings.default_sample_rate*3,settings.default_sample_rate)
+    try:
+        while True:
+            message=await websocket.receive();
+            if message.get("type")=="websocket.disconnect": break
+            if message.get("bytes") is not None: waveform,_=decode_pcm16(message["bytes"],sample_rate,settings.default_sample_rate)
+            else: waveform=np.asarray(json.loads(message.get("text","[]")),dtype=np.float32)
+            for window in windows.push(waveform):
+                if is_speech(window):
+                    result=await inference_queue.submit(window); await websocket.send_json({"score":None if settings.hide_raw_scores else result["score"],"tier":result["tier"],"model_version":result["model_version"],"latency_ms":result["latency_ms"]})
     except WebSocketDisconnect: pass

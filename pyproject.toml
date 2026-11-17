@@ -35,4 +35,4 @@ line-length = 100
 target-version = "py311"
 
 [tool.setuptools.packages.find]
-include = ["app*", "audio*", "dsp*", "models*", "fusion*", "datasets*", "evaluation*", "monitoring*", "notifications*", "storage*", "pipelines*"]
+include = ["app*", "audio*", "dsp*", "models*", "fusion*", "datasets*", "evaluation*", "monitoring*", "notifications*", "storage*", "pipelines*", "training*", "inference*"]

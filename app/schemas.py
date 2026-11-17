@@ -41,5 +41,12 @@ class AlertResponse(BaseModel):
     acknowledged: bool = False
 
 
+class ScoreResponse(BaseModel):
+    score: float | None = None
+    tier: str
+    model_version: str
+    latency_ms: float
+
+
 def now() -> datetime:
     return datetime.now(timezone.utc)
