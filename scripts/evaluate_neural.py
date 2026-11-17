@@ -3,6 +3,8 @@ from __future__ import annotations
 import argparse, json
 from pathlib import Path
 
+from _bootstrap import ROOT
+
 from models.config import load_yaml_config
 from training.config import load_config
 from training.dataset import make_pytorch_dataset, read_manifest, stratified_split

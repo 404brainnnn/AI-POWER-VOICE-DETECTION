@@ -3,6 +3,8 @@ from __future__ import annotations
 import argparse, json
 from pathlib import Path
 
+from _bootstrap import ROOT
+
 from models.config import load_yaml_config
 from training.calibration import calibrated_scores, choose_thresholds, expected_calibration_error, save_thresholds, temperature_scale
 from training.config import load_config

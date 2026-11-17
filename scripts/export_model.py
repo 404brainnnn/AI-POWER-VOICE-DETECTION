@@ -3,6 +3,8 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
+from _bootstrap import ROOT
+
 import torch
 
 from models.config import load_yaml_config
