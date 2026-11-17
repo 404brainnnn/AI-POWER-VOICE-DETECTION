@@ -16,6 +16,8 @@ Train the baseline or XLS-R model:
 python scripts/train_neural.py --config configs/train.yaml --device cuda
 ```
 
+Training prints live batch progress and an end-of-epoch summary containing train loss, validation EER, minDCF, false-alarm rates at 90/95/99% spoof recall, learning rate, best-checkpoint status, early-stopping patience, and elapsed time. Set `train.verbose: false` to suppress progress output or change `train.log_interval` to control batch logging frequency.
+
 Set `train.model: xlsr_aasist` in `configs/train.yaml` to download `facebook/wav2vec2-xls-r-300m` from Hugging Face. Use a local Hugging Face cache or approved mirror for repeatable/offline runs. Checkpoints are written to `artifacts/checkpoints`; `best.pt` is selected by validation EER and `last.pt` supports resume.
 
 Calibrate only on the held-out validation split, then evaluate once on the untouched test split:

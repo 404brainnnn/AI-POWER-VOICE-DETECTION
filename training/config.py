@@ -37,6 +37,8 @@ class TrainConfig:
     resume_from: str | None = None
     mlflow_tracking_uri: str | None = None
     mlflow_experiment: str = "voice-deepfake"
+    verbose: bool = True
+    log_interval: int = 10
 
 
 @dataclass

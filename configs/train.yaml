@@ -24,3 +24,5 @@ train:
   early_stopping_patience: 5
   checkpoint_dir: artifacts/checkpoints
   output_dir: artifacts/run
+  verbose: true
+  log_interval: 10
