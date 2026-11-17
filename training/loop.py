@@ -51,7 +51,7 @@ def train_model(model, train_loader, validation_loader, config, device: str = "c
         if improved: best_eer=metrics["eer"]; patience=0; save_checkpoint(config.checkpoint_dir+"/best.pt",model,optimizer,scheduler,scaler,epoch,metrics)
         else: patience+=1
         if config.verbose:
-            print(f"epoch {epoch + 1}/{config.epochs} complete | train_loss={metrics['train_loss']:.5f} | val_eer={metrics['eer']:.5f} | min_dcf={metrics['min_dcf']:.5f} | FA@90={metrics['false_alarm_at_90_recall']:.5f} | FA@95={metrics['false_alarm_at_95_recall']:.5f} | FA@99={metrics['false_alarm_at_99_recall']:.5f} | {'BEST' if improved else f'patience={patience}/{config.early_stopping_patience}'} | elapsed={time.perf_counter()-epoch_started:.1f}s", flush=True)
+            print(f"epoch {epoch + 1}/{config.epochs} complete | train_loss={metrics['train_loss']:.5f} | val_eer={metrics['eer']:.5f} | min_dcf={metrics['min_dcf']:.5f} | FA@90={metrics['false_alarm_at_90_recall']:.5f} | FA@95={metrics['false_alarm_at_95_recall']:.5f} | FA@99={metrics['false_alarm_at_99_recall']:.5f} | mean_real={metrics['score_mean_real']:.5f} | mean_ai={metrics['score_mean_ai']:.5f} | {'BEST' if improved else f'patience={patience}/{config.early_stopping_patience}'} | elapsed={time.perf_counter()-epoch_started:.1f}s", flush=True)
         if patience>=config.early_stopping_patience: break
     if config.verbose: print(f"Training finished | best_val_eer={best_eer:.5f} | total_elapsed={time.perf_counter()-started_training:.1f}s | checkpoint={config.checkpoint_dir}/best.pt", flush=True)
     Path(config.output_dir).mkdir(parents=True,exist_ok=True); Path(config.output_dir,"history.json").write_text(json.dumps(history,indent=2),encoding="utf-8"); return {"best_eer":best_eer,"history":history,"device":str(device)}
@@ -64,7 +64,7 @@ def evaluate_model(model, loader, device):
         for waveforms,target,_ in loader:
             logits,_=model(waveforms.to(device)); scores.extend(torch.softmax(logits,dim=1)[:,1].cpu().numpy()); labels.extend(target.numpy())
     from .evaluation import detection_metrics
-    return detection_metrics(np.asarray(scores),np.asarray(labels))
+    values=detection_metrics(np.asarray(scores),np.asarray(labels)); values.update({"score_mean_real":float(np.mean(np.asarray(scores)[np.asarray(labels)==0])) if np.any(np.asarray(labels)==0) else 0.0,"score_mean_ai":float(np.mean(np.asarray(scores)[np.asarray(labels)==1])) if np.any(np.asarray(labels)==1) else 0.0}); return values
 
 
 def save_checkpoint(path,model,optimizer,scheduler,scaler,epoch,metrics):
