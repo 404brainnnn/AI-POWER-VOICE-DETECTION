@@ -7,15 +7,18 @@ from typing import Callable
 import numpy as np
 
 
-def read_manifest(path: str | Path) -> list[dict[str, str | int]]:
+def read_manifest(path: str | Path, resolve_relative_to_csv: bool = False) -> list[dict[str, str | int]]:
     with Path(path).open(newline="", encoding="utf-8") as handle:
         rows = list(csv.DictReader(handle))
-    if not rows or not {"location", "label"}.issubset(rows[0]): raise ValueError("manifest must contain location,label columns")
+    if not rows: raise ValueError(f"manifest is empty: {path}")
+    columns={str(key).strip().lower():key for key in rows[0] if key is not None}
+    if not {"location", "label"}.issubset(columns): raise ValueError(f"manifest must contain location,label columns; found {list(rows[0])}")
     result=[]
     for row in rows:
-        location=row["location"].strip(); label=int(row["label"])
+        location=str(row[columns["location"]]).strip(); label=int(row[columns["label"]])
         if not location: raise ValueError("location cannot be empty")
         if label not in (0,1): raise ValueError("label must be 0 human or 1 AI")
+        if resolve_relative_to_csv and not Path(location).is_absolute(): location=str((Path(path).parent/location).resolve())
         result.append({"location": location, "label": label, **{key:value for key,value in row.items() if key not in {"location","label"}}})
     return result
 

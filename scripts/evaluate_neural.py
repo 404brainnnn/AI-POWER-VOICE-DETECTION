@@ -12,7 +12,7 @@ from training.evaluation import detection_metrics
 from training.predict import collect_logits, load_trained_model
 from training.calibration import calibrated_scores
 
-parser=argparse.ArgumentParser(); parser.add_argument("--config",default="configs/train.yaml"); parser.add_argument("--checkpoint",required=True); parser.add_argument("--csv"); parser.add_argument("--calibration"); parser.add_argument("--device",default="cuda"); parser.add_argument("--output",default="artifacts/evaluation.json"); args=parser.parse_args(); cfg=load_config(args.config); rows=read_manifest(args.csv or cfg.data.csv_path); test=stratified_split(rows,seed=cfg.train.seed)["test"]
+parser=argparse.ArgumentParser(); parser.add_argument("--config",default="configs/train.yaml"); parser.add_argument("--checkpoint",required=True); parser.add_argument("--csv"); parser.add_argument("--calibration"); parser.add_argument("--device",default="cuda"); parser.add_argument("--output",default="artifacts/evaluation.json"); args=parser.parse_args(); cfg=load_config(args.config); csv_path=args.csv or cfg.data.test_csv_path; test=read_manifest(csv_path,True) if csv_path else stratified_split(read_manifest(cfg.data.csv_path,True),seed=cfg.train.seed)["test"]
 import torch
 from torch.utils.data import DataLoader
 model_config=load_yaml_config("configs/model.yaml"); model_config["model"]["name"]=cfg.train.model; model_config["model"]["backbone"]=cfg.train.backbone; model,device=load_trained_model(model_config,args.checkpoint,args.device); loader=DataLoader(make_pytorch_dataset(test,cfg.data.sample_rate,cfg.data.duration_seconds),batch_size=cfg.data.batch_size,shuffle=False); logits,labels=collect_logits(model,loader,device); temperature=1.0
