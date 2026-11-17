@@ -7,6 +7,9 @@ from pathlib import Path
 @dataclass
 class DataConfig:
     csv_path: str = "data/manifest.csv"
+    train_csv_path: str | None = None
+    validation_csv_path: str | None = None
+    test_csv_path: str | None = None
     sample_rate: int = 16_000
     duration_seconds: float = 3.0
     num_workers: int = 2

@@ -1,5 +1,8 @@
 data:
   csv_path: data/manifest.csv
+  train_csv_path: null
+  validation_csv_path: null
+  test_csv_path: null
   sample_rate: 16000
   duration_seconds: 3.0
   batch_size: 4

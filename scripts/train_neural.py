@@ -15,10 +15,13 @@ from training.loop import train_model
 
 
 def main() -> None:
-    parser=argparse.ArgumentParser(); parser.add_argument("--config",default="configs/train.yaml"); parser.add_argument("--device",default="cuda"); parser.add_argument("--mlflow",action="store_true"); args=parser.parse_args(); cfg=load_config(args.config); rows=read_manifest(cfg.data.csv_path)
+    parser=argparse.ArgumentParser(); parser.add_argument("--config",default="configs/train.yaml"); parser.add_argument("--train-csv"); parser.add_argument("--validation-csv"); parser.add_argument("--device",default="cuda"); parser.add_argument("--mlflow",action="store_true"); args=parser.parse_args(); cfg=load_config(args.config); train_csv=args.train_csv or cfg.data.train_csv_path; validation_csv=args.validation_csv or cfg.data.validation_csv_path
+    if train_csv and validation_csv: train_rows=read_manifest(train_csv,True); validation_rows=read_manifest(validation_csv,True)
+    else:
+        rows=read_manifest(cfg.data.csv_path,True); from training.dataset import stratified_split; splits=stratified_split(rows,seed=cfg.train.seed); train_rows,validation_rows=splits["train"],splits["validation"]
     import torch
     from torch.utils.data import DataLoader
-    splits=stratified_split(rows, seed=cfg.train.seed); train_set=make_pytorch_dataset(splits["train"],cfg.data.sample_rate,cfg.data.duration_seconds); val_set=make_pytorch_dataset(splits["validation"],cfg.data.sample_rate,cfg.data.duration_seconds); train_loader=DataLoader(train_set,batch_size=cfg.data.batch_size,shuffle=True,num_workers=cfg.data.num_workers); val_loader=DataLoader(val_set,batch_size=cfg.data.batch_size,shuffle=False,num_workers=cfg.data.num_workers)
+    train_set=make_pytorch_dataset(train_rows,cfg.data.sample_rate,cfg.data.duration_seconds); val_set=make_pytorch_dataset(validation_rows,cfg.data.sample_rate,cfg.data.duration_seconds); train_loader=DataLoader(train_set,batch_size=cfg.data.batch_size,shuffle=True,num_workers=cfg.data.num_workers); val_loader=DataLoader(val_set,batch_size=cfg.data.batch_size,shuffle=False,num_workers=cfg.data.num_workers)
     model_config=load_yaml_config("configs/model.yaml"); model_config["model"]["name"]=cfg.train.model; model_config["model"]["backbone"]=cfg.train.backbone; model=build_detector(model_config)
     if args.mlflow:
         import mlflow
