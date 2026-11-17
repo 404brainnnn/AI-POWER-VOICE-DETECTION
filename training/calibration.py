@@ -29,6 +29,10 @@ def expected_calibration_error(scores: np.ndarray, labels: np.ndarray, bins: int
     return float(total)
 
 
+def brier_score(scores: np.ndarray, labels: np.ndarray) -> float:
+    return float(np.mean((np.asarray(scores, dtype=float)-np.asarray(labels, dtype=float))**2))
+
+
 def choose_thresholds(scores: np.ndarray, labels: np.ndarray, target_false_alarm: float = 0.01) -> dict[str,float]:
     bona=scores[labels==0]
     if bona.size == 0: raise ValueError("held-out calibration set needs bona fide samples")
