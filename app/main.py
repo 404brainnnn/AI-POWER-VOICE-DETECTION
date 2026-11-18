@@ -5,7 +5,7 @@ from pathlib import Path
 import time
 
 import numpy as np
-from fastapi import Body, Depends, FastAPI, Header, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import Body, Depends, FastAPI, Header, HTTPException, Response, WebSocket, WebSocketDisconnect
 from fastapi.responses import PlainTextResponse
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -133,10 +133,11 @@ def get_session(session_id: str) -> dict:
     return {"session_id": session_id, "sample_rate": session.sample_rate, "buffered_samples": len(session.buffer), "risk": session.risk.bayesian.posterior}
 
 
-@app.delete("/api/v1/sessions/{session_id}", status_code=204)
-def delete_session(session_id: str, _: None = Depends(require_api_key)) -> None:
+@app.delete("/api/v1/sessions/{session_id}", status_code=204, response_class=Response, response_model=None)
+def delete_session(session_id: str, _: None = Depends(require_api_key)) -> Response:
     if session_id not in service.sessions: raise HTTPException(404, "session not found")
     service.delete_session(session_id)
+    return Response(status_code=204)
 
 
 @app.post("/api/v1/detection/analyze", response_model=list[DetectionResponse])
