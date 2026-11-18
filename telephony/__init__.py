@@ -1,0 +1,1 @@
+"""Authorized telephony-provider adapters."""

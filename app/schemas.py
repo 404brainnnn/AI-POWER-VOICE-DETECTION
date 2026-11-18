@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from typing import Literal
 from pydantic import BaseModel, Field
 
 
@@ -46,6 +47,29 @@ class ScoreResponse(BaseModel):
     tier: str
     model_version: str
     latency_ms: float
+
+
+class CallCreateRequest(BaseModel):
+    to: str = Field(min_length=8, max_length=16, pattern=r"^\+[1-9]\d{7,14}$")
+    mode: Literal["human", "synthetic"]
+    consent_confirmed: bool = False
+
+
+class CallResponse(BaseModel):
+    call_id: str
+    status: str
+    mode: str
+    to: str
+    provider: str = "dotvoice"
+
+
+class CallEventResponse(BaseModel):
+    event: str
+    call_id: str
+    status: str | None = None
+    risk_tier: str | None = None
+    score: float | None = None
+    timestamp: datetime
 
 
 def now() -> datetime:

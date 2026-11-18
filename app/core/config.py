@@ -22,6 +22,10 @@ class Settings:
         self.max_batch_size = int(os.getenv("MAX_BATCH_SIZE", "8"))
         self.max_batch_wait_ms = int(os.getenv("MAX_BATCH_WAIT_MS", "20"))
         self.hide_raw_scores = os.getenv("HIDE_RAW_SCORES", "false").lower() == "true"
+        self.dotvoice_api_key = os.getenv("DOTVOICE_API_KEY")
+        self.dotvoice_from_number = os.getenv("DOTVOICE_FROM_NUMBER")
+        self.dotvoice_base_url = os.getenv("DOTVOICE_BASE_URL", "https://api.dotvoice.ai/v1")
+        self.public_base_url = os.getenv("PUBLIC_BASE_URL", "")
 
     @property
     def cors_origins(self) -> list[str]:
