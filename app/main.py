@@ -10,7 +10,7 @@ from fastapi.responses import PlainTextResponse
 from fastapi.middleware.cors import CORSMiddleware
 
 from .core.config import settings
-from .schemas import AnalyzeRequest, AlertResponse, DetectionResponse, ScoreResponse, SessionResponse, now
+from .schemas import AnalyzeRequest, AlertResponse, CallCreateRequest, CallEventResponse, CallResponse, DetectionResponse, ScoreResponse, SessionResponse, now
 from .services import DetectionService
 from .core.security import require_api_key
 from monitoring.metrics import LatencyRegistry
@@ -19,6 +19,8 @@ from audio.ingestion import decode_pcm16
 from audio.vad import is_speech
 from inference.queue import BatchingInferenceQueue
 from monitoring.prometheus import metrics_text
+from telephony.dotvoice import DotVoiceClient, DotVoiceConfig
+import base64
 
 app = FastAPI(title="Voice Clone Impersonation Detector", version="0.1.0")
 app.add_middleware(CORSMiddleware, allow_origins=settings.cors_origins, allow_methods=["GET", "POST", "DELETE"], allow_headers=["*"])
@@ -30,6 +32,8 @@ startup_error = None
 request_count = 0
 tier_counts = {}
 latency_samples = []
+dotvoice = DotVoiceClient(DotVoiceConfig(settings.dotvoice_api_key,settings.dotvoice_from_number,settings.dotvoice_base_url,settings.public_base_url))
+call_events: dict[str,list[dict]] = {}
 
 
 @app.on_event("startup")
@@ -91,6 +95,28 @@ def status() -> dict: return {"service": "voice-clone-detector", "detection_mode
 
 @app.get("/api/v1/models")
 def models() -> dict: return {"models": [{"name": "dsp-baseline", "status": "available_for_training", "trained": False}, {"name": "deep-learning", "status": "deferred"}]}
+
+
+@app.post("/api/v1/calls", response_model=CallResponse)
+async def create_call(request: CallCreateRequest, _: None = Depends(require_api_key)) -> CallResponse:
+    if not request.consent_confirmed: raise HTTPException(400,"confirm that the destination is authorized for this test call")
+    try: provider_result=await dotvoice.create_call(request.to,request.mode,request.consent_confirmed)
+    except ValueError as exc: raise HTTPException(422,str(exc)) from exc
+    except RuntimeError as exc: raise HTTPException(503,str(exc)) from exc
+    call_id=str(provider_result.get("call_id") or provider_result.get("id") or "unknown"); call_events.setdefault(call_id,[]).append({"event":"created","call_id":call_id,"status":provider_result.get("status","queued"),"timestamp":now()}); return CallResponse(call_id=call_id,status=provider_result.get("status","queued"),mode=request.mode,to=request.to)
+
+
+@app.get("/api/v1/calls/{call_id}/events", response_model=list[CallEventResponse])
+def get_call_events(call_id: str) -> list[CallEventResponse]: return [CallEventResponse(**event) for event in call_events.get(call_id,[])]
+
+
+@app.post("/api/v1/telephony/dotvoice/answer")
+def dotvoice_answer() -> dict: return {"status":"ok","stream_url":f"{settings.public_base_url.rstrip('/')}/api/v1/telephony/dotvoice/media"}
+
+
+@app.post("/api/v1/telephony/dotvoice/webhook")
+async def dotvoice_webhook(payload: dict) -> dict:
+    call_id=str(payload.get("call_id") or payload.get("id") or "unknown"); call_events.setdefault(call_id,[]).append({"event":"provider_webhook","call_id":call_id,"status":payload.get("status"),"timestamp":now()}); return {"received":True}
 
 
 @app.post("/api/v1/sessions", response_model=SessionResponse)
@@ -188,4 +214,31 @@ async def neural_stream(websocket: WebSocket) -> None:
             for window in windows.push(waveform):
                 if is_speech(window):
                     result=await inference_queue.submit(window); await websocket.send_json({"score":None if settings.hide_raw_scores else result["score"],"tier":result["tier"],"model_version":result["model_version"],"latency_ms":result["latency_ms"]})
+    except WebSocketDisconnect: pass
+
+
+@app.websocket("/api/v1/telephony/dotvoice/media")
+async def dotvoice_media(websocket: WebSocket) -> None:
+    """Provider media boundary; accepts provider frames and feeds the detector queue.
+
+    DotVoice payload formats can vary by account/API version, so this adapter accepts
+    binary PCM16 frames and JSON frames containing base64 PCM16 audio. It never sends
+    arbitrary RTP packets or alters the provider call audio.
+    """
+    await websocket.accept(); call_id=websocket.query_params.get("call_id","unknown"); windows=SlidingWindowGenerator(settings.default_sample_rate*3,settings.default_sample_rate)
+    try:
+        while True:
+            message=await websocket.receive()
+            if message.get("type")=="websocket.disconnect": break
+            sample_rate=settings.default_sample_rate; payload=message.get("bytes")
+            if payload is None:
+                data=json.loads(message.get("text","{}")); call_id=str(data.get("call_id",call_id)); sample_rate=int(data.get("sample_rate",sample_rate)); encoded=data.get("audio_base64") or data.get("audio")
+                if isinstance(encoded,str): payload=base64.b64decode(encoded)
+                elif isinstance(encoded,list): payload=np.asarray(encoded,dtype=np.float32); sample_rate=settings.default_sample_rate
+            if isinstance(payload,bytes): waveform,_=decode_pcm16(payload,sample_rate,settings.default_sample_rate)
+            else: waveform=np.asarray(payload,dtype=np.float32)
+            for window in windows.push(waveform):
+                if not is_speech(window): continue
+                if inference_queue is None: continue
+                result=await inference_queue.submit(window); call_events.setdefault(call_id,[]).append({"event":"risk_update","call_id":call_id,"status":"streaming","risk_tier":result["tier"],"score":None if settings.hide_raw_scores else result["score"],"timestamp":now()})
     except WebSocketDisconnect: pass

@@ -22,3 +22,9 @@ class NeuralRuntime:
         with torch.inference_mode(): logits,_=self.model(batch); scores=torch.softmax(logits,dim=1)[:,1].detach().cpu().numpy()
         latency=(time.perf_counter()-started)*1000
         return [{"score":float(score),"tier":self.thresholds.tier(float(score)),"model_version":self.model_version,"latency_ms":latency} for score in scores]
+
+    def predict_proba(self, waveform: np.ndarray, sample_rate: int):
+        from models.base import DetectorOutput
+        if sample_rate != self.sample_rate: raise ValueError("runtime sample rate mismatch")
+        result=self.predict_batch([waveform])[0]
+        return DetectorOutput(result["score"],result["model_version"],True,"neural")
