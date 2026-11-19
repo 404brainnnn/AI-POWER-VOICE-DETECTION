@@ -25,6 +25,8 @@ Usage: ./start.sh [command]
 
 Commands:
   start       Start the FastAPI inference backend (default)
+  demo        Start FastAPI and Next.js for the local/SSH demo
+  frontend    Start only the Next.js frontend on the current machine
   stop        Stop local processes and Docker Compose services
   status      Show local process and Docker Compose status
   tunnel      Forward API and frontend ports from a GPU host over SSH
@@ -165,9 +167,7 @@ run_simulation() {
 run_tunnel() {
   local target="${GPU_SSH_TARGET:-}"
   local local_api_port="${LOCAL_API_PORT:-8000}"
-  local local_frontend_port="${LOCAL_FRONTEND_PORT:-3000}"
   local remote_api_port="${REMOTE_API_PORT:-8000}"
-  local remote_frontend_port="${REMOTE_FRONTEND_PORT:-3000}"
   [[ -n "$target" ]] || {
     echo "ERROR: set GPU_SSH_TARGET, for example:" >&2
     echo "GPU_SSH_TARGET=muthu@gpu-host ./start.sh tunnel" >&2
@@ -175,11 +175,9 @@ run_tunnel() {
   }
   require_command ssh
   echo "Forwarding localhost:$local_api_port -> $target:localhost:$remote_api_port"
-  echo "Forwarding localhost:$local_frontend_port -> $target:localhost:$remote_frontend_port"
   echo "Keep this terminal open. Press Ctrl-C to close the tunnel."
   exec ssh -o ExitOnForwardFailure=yes -N \
     -L "${local_api_port}:127.0.0.1:${remote_api_port}" \
-    -L "${local_frontend_port}:127.0.0.1:${remote_frontend_port}" \
     "$target"
 }
 
@@ -191,8 +189,23 @@ main() {
     status) status_all ;;
     tunnel) run_tunnel ;;
     simulate) run_simulation "$@" ;;
-    start)
+    frontend)
       load_environment
+      START_FRONTEND=1
+      trap cleanup EXIT INT TERM
+      start_frontend
+      echo
+      echo "Frontend started on http://localhost:$FRONTEND_PORT"
+      echo "API target: ${NEXT_PUBLIC_API_BASE_URL:-http://localhost:$API_PORT}"
+      echo "Press Ctrl-C to stop the frontend."
+      while true; do sleep 2; done
+      ;;
+    start|demo)
+      load_environment
+      if [[ "$command" == "demo" ]]; then
+        START_FRONTEND=1
+        START_INFRA="${START_INFRA:-0}"
+      fi
       trap cleanup EXIT INT TERM
       start_infrastructure
       start_backend
