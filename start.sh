@@ -27,6 +27,7 @@ Commands:
   start       Start the FastAPI inference backend (default)
   stop        Stop local processes and Docker Compose services
   status      Show local process and Docker Compose status
+  tunnel      Forward API and frontend ports from a GPU host over SSH
   simulate    Run the offline VoIP simulation using its normal CLI options
   help        Show this help
 
@@ -37,6 +38,7 @@ Environment switches:
   STOP_INFRA_ON_EXIT=1      Stop Docker services when this script exits
   API_PORT=8000             FastAPI port
   FRONTEND_PORT=3000        Next.js port
+  GPU_SSH_TARGET=user@gpu-host  SSH destination used by the tunnel command
 EOF
 }
 
@@ -160,12 +162,34 @@ run_simulation() {
   exec "$PYTHON_BIN" scripts/simulate_voip.py "$@"
 }
 
+run_tunnel() {
+  local target="${GPU_SSH_TARGET:-}"
+  local local_api_port="${LOCAL_API_PORT:-8000}"
+  local local_frontend_port="${LOCAL_FRONTEND_PORT:-3000}"
+  local remote_api_port="${REMOTE_API_PORT:-8000}"
+  local remote_frontend_port="${REMOTE_FRONTEND_PORT:-3000}"
+  [[ -n "$target" ]] || {
+    echo "ERROR: set GPU_SSH_TARGET, for example:" >&2
+    echo "GPU_SSH_TARGET=muthu@gpu-host ./start.sh tunnel" >&2
+    exit 2
+  }
+  require_command ssh
+  echo "Forwarding localhost:$local_api_port -> $target:localhost:$remote_api_port"
+  echo "Forwarding localhost:$local_frontend_port -> $target:localhost:$remote_frontend_port"
+  echo "Keep this terminal open. Press Ctrl-C to close the tunnel."
+  exec ssh -o ExitOnForwardFailure=yes -N \
+    -L "${local_api_port}:127.0.0.1:${remote_api_port}" \
+    -L "${local_frontend_port}:127.0.0.1:${remote_frontend_port}" \
+    "$target"
+}
+
 main() {
   local command="${1:-start}"
   case "$command" in
     help|-h|--help) usage ;;
     stop) stop_all ;;
     status) status_all ;;
+    tunnel) run_tunnel ;;
     simulate) run_simulation "$@" ;;
     start)
       load_environment
