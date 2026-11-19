@@ -54,4 +54,4 @@ flowchart LR
 
 ## Deployment trade-off
 
-ECS EC2 GPU provides control over GPU instance capacity, WebSocket behavior, and cost tuning, but requires AMI, autoscaling, patching, and capacity management. SageMaker real-time endpoints provide managed model deployment and autoscaling, but introduce endpoint packaging constraints, per-endpoint cost, and a less direct fit for long-lived bidirectional WebSocket sessions. The checked-in Terraform defaults to parameterized ECS EC2 GPU resources; no AWS resources are created automatically.
+ECS EC2 GPU provides control over GPU instance capacity, WebSocket behavior, and cost tuning, but requires AMI, autoscaling, patching, and capacity management. SageMaker real-time endpoints provide managed model deployment and autoscaling, but introduce endpoint packaging constraints, per-endpoint cost, and a less direct fit for long-lived bidirectional WebSocket sessions. The checked-in Terraform defaults to parameterized ECS EC2 GPU resources; no AWS resources are created automatically. 
