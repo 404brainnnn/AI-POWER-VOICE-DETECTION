@@ -11,7 +11,6 @@
 \newcommand{\placeholder}[1]{\textcolor{blue}{\textit{[#1]}}}
 
 \title{AI-Powered Real-Time Detection and Prevention of Voice Cloning Impersonation Attacks in VoIP Calls}
-
 \author{Muthu Amudhan S, Amanjeeta Rath, Khushi Kumari, and Debosmita Mukhopadhyay%
 \thanks{The authors are with \placeholder{Department and Institution, City, Country}. E-mail: \texttt{<muthu-email-placeholder>}, \texttt{<amanjeeta-email-placeholder>}, \texttt{<khushi-email-placeholder>}, and \texttt{<debosmita-email-placeholder>}.}}
 
@@ -19,133 +18,109 @@
 \maketitle
 
 \begin{abstract}
-Voice-cloning systems increasingly enable synthetic speech to impersonate a trusted caller in telephone and Voice-over-IP (VoIP) interactions. This paper presents a privacy-preserving architecture for real-time detection of synthetic speech using a classical digital signal processing (DSP) fast path and an extensible deep-learning path. The system validates and processes 16-kHz mono speech in three-second sliding windows, applies voice activity detection, extracts Fourier, spectral, phase, pitch, and speech-activity features, and combines calibrated evidence using a dependence-aware sequential Bayesian risk engine. The deep-learning interface supports a convolutional baseline and an XLS-R encoder with learned sensitive-layer selection and an AASIST-style graph-attention backend. We describe calibration, grouped zero-day evaluation, privacy-preserving telemetry, asynchronous inference batching, and GPU-oriented deployment. Quantitative results are intentionally reserved for experiments on the authors' labeled dataset and are not fabricated in this draft.
+Voice-cloning systems can impersonate trusted callers during telephone and Voice-over-IP (VoIP) interactions. This paper presents a privacy-preserving detection service with a DSP fast path, a configurable neural-model interface, calibrated probabilities, and dependence-aware sequential risk accumulation. The implemented pipeline validates 16-kHz mono audio, applies voice activity detection, packetizes streaming audio into three-second windows, and returns low-, medium-, or high-risk decisions. A baseline LCNN was trained on a labeled Tamil speech dataset containing 3,295 training, 412 validation, and 412 test recordings, with labels 0 for human and 1 for AI speech. On the available held-out split, the baseline obtained 0.00 EER and 0.00 minDCF; calibrated test Brier score and ECE were 0.00936 and 0.01683, respectively. These results are reported only for the observed split: generator-disjoint, cross-dataset, channel-robustness, and end-to-end latency experiments remain pending. An offline RTP-like simulator and GPU-backed FastAPI service support an authorized demonstration without placing calls or persisting raw audio.
 \end{abstract}
 
 \begin{IEEEkeywords}
-voice deepfake detection, synthetic speech, voice cloning, VoIP security, digital signal processing, XLS-R, calibration, sequential Bayesian inference.
+voice deepfake detection, synthetic speech, voice cloning, VoIP security, digital signal processing, calibration, sequential inference.
 \end{IEEEkeywords}
 
 \section{Introduction}
-Voice cloning can reproduce speaker identity cues from short recordings and can therefore be used to impersonate a caller during authentication, financial, or social-engineering interactions. Telephone channels complicate detection because codecs, bandwidth limitation, packet loss, resampling, and noise can create artifacts that resemble synthetic-speech artifacts. A practical detector must operate under latency constraints without treating ordinary channel artifacts as definitive evidence of synthesis.
+Voice cloning can reproduce speaker identity cues from short recordings and can therefore support impersonation in authentication, financial, and social-engineering scenarios. Telephone channels complicate detection because codecs, bandwidth limitation, packet loss, resampling, and noise can create artifacts that resemble synthetic-speech artifacts. A practical detector must operate on short windows without treating ordinary channel artifacts as definitive evidence of synthesis.
 
-This work develops a modular detector with four objectives: 1) provide a reproducible DSP baseline; 2) define a trainable deep-learning detector interface; 3) accumulate evidence across streaming windows without treating overlapping observations as independent; and 4) expose a deployable security service for authorized VoIP applications. The system processes audio in memory and emits metadata-only security events.
+This work develops a modular detector with four objectives: provide a reproducible DSP and neural baseline; accumulate evidence across streaming windows without assuming independence; expose a GPU-backed security service; and preserve raw audio privacy. The current implementation uses a CNN/LCNN baseline for measured experiments. XLS-R and AASIST-compatible interfaces are implemented for later study but were not trained in the reported experiment.
 
-The contributions are:
-\begin{itemize}[leftmargin=*]
-\item a configurable three-second streaming pipeline with VAD gating and bounded ephemeral buffering;
-\item a Fourier- and DSP-based feature engine that handles narrowband telephony limitations;
-\item CNN and XLS-R/AASIST-compatible detector interfaces with standardized logits and embeddings;
-\item calibrated score fusion and discounted sequential Bayesian risk accumulation;
-\item grouped evaluation protocols for speaker-, source-, generator-, codec-, accent-, and noise-disjoint experiments; and
-\item a FastAPI, Docker, MLflow, ZenML, and AWS-oriented operational foundation without raw call-audio persistence.
-\end{itemize}
+The contributions are: a bounded three-second streaming pipeline; Fourier and speech-acoustic feature infrastructure; a trainable CNN baseline and future neural adapter interface; probability calibration and sequential risk scoring; grouped evaluation and robustness scaffolding; and an offline VoIP demonstration that displays packet flow, model output, and simulated control events without accessing a live call.
 
 \section{Threat Model and Scope}
-We consider an attacker who supplies or generates synthetic speech intended to impersonate a human speaker over an authorized telephone or VoIP channel. The detector observes audio and optional non-sensitive session identifiers. It does not assume caller identity, transaction context, or physiological ground truth. A low-risk call continues, a medium-risk call receives a verification recommendation, and a high-risk call produces an alert recommending step-up authentication. Automatic call termination or transaction freezing is outside the scope of this version.
+We consider an attacker who supplies synthetic speech intended to impersonate a human speaker over an authorized telephone or VoIP channel. The detector observes audio and non-sensitive session state; it does not assume caller identity, transaction context, or physiological ground truth. A low-risk call continues, a medium-risk call receives a verification recommendation, and a high-risk call produces an alert recommending step-up authentication. Automatic call termination and transaction freezing are outside the scope of this version.
 
-The input is a mono floating-point waveform sampled at 16 kHz after channel-specific preprocessing. The reference evaluation unit is a three-second speech window with a configurable one-second hop. Labels follow the dataset convention $y=0$ for a human recording and $y=1$ for an AI-generated recording.
+The input convention is mono floating-point speech sampled at 16 kHz after channel preprocessing. The evaluation unit is a three-second window with a configurable one-second hop. Dataset labels are $y=0$ for a human recording and $y=1$ for AI-generated speech.
 
-\section{System Architecture}
-Fig.~\ref{fig:architecture} summarizes the processing flow. Audio is validated, resampled when required, held in a bounded RAM buffer, gated by VAD, and divided into overlapping windows. DSP and optional neural branches produce standardized synthetic-speech scores. Calibration, fusion, and sequential risk logic produce a decision tier.
+\section{System Design}
+Audio is decoded and validated, held in a bounded RAM buffer, gated by VAD, and divided into overlapping windows. The DSP and optional neural branches produce scores. Calibration and fusion produce a decision tier, while the sequential engine discounts evidence from overlapping windows. The FastAPI service exposes REST and WebSocket interfaces; the browser demonstration uses an offline packet simulator and sends only PCM16 windows to the GPU inference endpoint.
 
 \begin{figure}[t]
 \centering
 \fbox{\parbox{0.94\columnwidth}{\centering
-PCM16/VoIP audio $\rightarrow$ validation and resampling $\rightarrow$ ephemeral buffer $\rightarrow$ VAD $\rightarrow$ 3-s windows\\[2pt]
-$\swarrow$ DSP Fourier features \hspace{12mm} $\searrow$ optional neural detector\\[2pt]
-calibrated score fusion $\rightarrow$ discounted Bayesian accumulation $\rightarrow$ low / medium / high event}}
-\caption{High-level architecture of the proposed voice-cloning detection service.}
+PCM16/VoIP audio $\rightarrow$ validation/resampling $\rightarrow$ RAM buffer $\rightarrow$ VAD $\rightarrow$ 3-s windows\\[2pt]
+$\swarrow$ DSP/CNN path \hspace{14mm} $\searrow$ optional XLS-R path\\[2pt]
+calibration and fusion $\rightarrow$ discounted Bayesian risk $\rightarrow$ low / medium / high event}}
+\caption{Implemented processing flow. The XLS-R path is an integration interface and is not included in the reported baseline measurements.}
 \label{fig:architecture}
 \end{figure}
 
-\section{DSP Fast Path}
-\subsection{Fourier and Spectral Analysis}
-For a window $x[n]$, the short-time Fourier transform is computed using a Hann window $w[n]$:
+\subsection{DSP and Fourier Processing}
+For a window $x[n]$, the short-time Fourier transform uses a Hann window, $N=512$, and hop $H=160$ at 16 kHz:
 \begin{equation}
-X(k,m)=\sum_{n=0}^{N-1}x[n+mH]w[n]e^{-j2\pi kn/N},
+X(k,m)=\sum_{n=0}^{N-1}x[n+mH]w[n]e^{-j2\pi kn/N}.
 \end{equation}
-where $N=512$ and $H=160$ for the reference 16-kHz configuration. The implementation derives spectral centroid, bandwidth, roll-off, flatness, flux, entropy, high-frequency energy ratio, zero-crossing rate, Mel-filterbank energies, and MFCC summaries. The Nyquist frequency is respected; high-frequency evidence is not treated as definitive when the source signal is narrowband.
+The feature registry includes spectral centroid, bandwidth, roll-off, flatness, flux, entropy, contrast, Mel energies, MFCCs, zero-crossing rate, high-frequency ratios, harmonic/noise proxies, phase irregularity, instantaneous-frequency statistics, pitch, jitter/shimmer proxies, voiced activity, pauses, and energy variation. Nyquist limits are respected, so narrowband telephone audio is not assigned synthetic labels solely because high-frequency energy is absent. Respiration-related quantities are described only as acoustic pause and inhalation-like proxies, not physiological measurements.
 
-Phase features include phase consistency and discontinuity statistics. More expensive group-delay and bicoherence features are configurable for offline experiments. Pitch is estimated using an autocorrelation proxy, and pause and voiced-activity ratios are acoustic proxies rather than verified respiration measurements.
+\subsection{Neural Baseline and Future Model}
+The measured baseline applies an on-the-fly GPU STFT, log magnitude, per-utterance normalization, and an LCNN-style convolutional detector with Max-Feature-Map blocks. It returns two-class logits and an embedding. Training uses AdamW, weighted cross-entropy, bf16 mixed precision when available, gradient clipping, checkpointing, warmup/cosine scheduling, and validation-EER early stopping.
 
-\subsection{Voice Activity Detection and Windowing}
-Short-time RMS energy is converted to decibels and compared with a configurable threshold. A window is processed only when its speech activity ratio exceeds the minimum. The ring buffer is bounded and expires stale sessions, preventing unbounded memory growth and preventing raw waveforms from entering operational stores.
+The model registry also defines interfaces for a future XLS-R 300M encoder and AASIST-style graph-attention head. Learned sensitive-layer selection can combine hidden states from all encoder layers, with a lower encoder learning rate than the head. No XLS-R checkpoint was fine-tuned for the results below; therefore those results must not be interpreted as XLS-R performance.
 
-\section{Neural Detector Architectures}
-\subsection{CNN Baseline}
-The baseline applies on-the-fly GPU STFT, logarithmic magnitude compression, and per-utterance normalization. The normalized tensor is passed to either a light convolutional network with Max-Feature-Map activations or a ResNet-18-style residual stack. Frequency is not aggressively pooled in the first block. Narrow frequency masking is applied during training as a configurable SpecAugment operation. The model returns logits $z\in\mathbb{R}^{B\times2}$ and an embedding $h\in\mathbb{R}^{B\times D}$.
-
-\subsection{XLS-R and Graph-Attention Backend}
-The main model uses the Hugging Face XLS-R checkpoint \texttt{facebook/wav2vec2-xls-r-300m}. Let $H_l$ denote the hidden state from layer $l$. Learned sensitive-layer selection produces:
+\subsection{Calibration and Sequential Risk}
+Temperature scaling is fitted on held-out validation logits. For calibrated probability $p_t$, the evidence is represented in log-odds form:
 \begin{equation}
-H=\sum_{l=0}^{L-1}\operatorname{softmax}(a)_lH_l.
-\end{equation}
-The selected temporal sequence is processed by an AASIST-style graph-attention head that aggregates local temporal neighborhoods and performs attentive pooling. The reference configuration uses approximately $10^{-5}$ for the encoder and $2\times10^{-4}$ for the head. Feature-extractor freezing and layer truncation are configurable.
-
-\section{Training and Calibration}
-The training input is a CSV containing \texttt{location} and \texttt{label}; capitalization is accepted. Audio is loaded as mono, resampled to 16 kHz, and padded or truncated to three seconds. The training implementation supports weighted cross-entropy and an optional OC-Softmax objective. AdamW, warmup, cosine decay, gradient accumulation, gradient clipping, bf16/fp16 mixed precision, checkpoint resume, and validation-EER early stopping are configured through YAML.
-
-Because classifier scores are not automatically calibrated probabilities, temperature scaling is fitted on a held-out validation set. Expected calibration error is reported using fixed probability bins. Thresholds are selected using bona fide validation scores and a target false-alarm rate, defaulting to one percent for the warning threshold. Temperature and thresholds are stored alongside the checkpoint and pinned at deployment.
-
-\section{Sequential Risk Engine}
-For a calibrated synthetic-speech probability $p_t$, the log-odds evidence is:
-\begin{equation}
-e_t=\log\left(\frac{p_t+\epsilon}{1-p_t+\epsilon}\right).
-\end{equation}
-The sequential state is updated as:
-\begin{equation}
+e_t=\log\left(\frac{p_t+\epsilon}{1-p_t+\epsilon}\right),\qquad
 \ell_t=\ell_{t-1}+\lambda e_t,\qquad P_t=\sigma(\ell_t),
 \end{equation}
-where $\lambda\in(0,1]$ discounts evidence from overlapping and dependent windows. The discount, prior, and tier thresholds must be selected using validation data; independent-window multiplication is not assumed.
+where $\lambda\in(0,1]$ discounts overlapping-window dependence. Independent-window probability multiplication is not used. Prior, discount, and tier thresholds must be selected from validation data and pinned with the model artifact.
 
-\section{Streaming Service and Privacy}
-The FastAPI service exposes REST and WebSocket paths. The binary \texttt{/score} endpoint accepts exactly three seconds of PCM16 audio and returns a calibrated score, decision tier, model version, and latency. The WebSocket path accumulates speech windows and submits them to a bounded asynchronous batching queue. Model execution is moved off the event loop so multiple authorized calls can be served concurrently.
+\section{Implementation and Demonstration}
+The backend is implemented with FastAPI, asynchronous inference batching, PyTorch, and optional CUDA execution. The binary \texttt{/score} endpoint accepts exactly three seconds of PCM16 and returns score, tier, model version, and processing latency. The frontend permits separate human and AI audio uploads. Audio is decoded in the browser, resampled to 16 kHz mono, divided into 20-ms RTP-like frames, and submitted as rolling three-second windows. After each model decision, the interface displays a simulated control-packet insertion event. This event is metadata for the demonstration; it is not arbitrary RTP injection and does not modify a live call.
 
-The service does not log raw waveforms or store audio in Redis, MongoDB, MLflow, or application logs. Metadata-only alerts may be retained with TTL policies. Memory-only processing does not guarantee physical erasure in the presence of swap, crash dumps, tracing, or host-level observability, which must be controlled operationally.
+Raw audio is not written to MongoDB, Redis, MLflow, application logs, or persistent artifacts. The design supports Docker, Redis, MongoDB, MLflow, ZenML, ONNX Runtime, ECS, and Terraform deployment. Production deployment requires private networking, authentication, TLS, model-version pinning, and an authorized VoIP integration.
 
 \section{Experimental Methodology}
-\subsection{Dataset and Splits}
-The dataset is represented by location-label records and may include speaker, source recording, generator, codec, accent, language, noise, SNR, and environment metadata. Primary experiments use speaker-disjoint and source-recording-disjoint partitions. Zero-day evaluation uses generator-disjoint and leave-one-generator-out tests. Cross-dataset, cross-accent, cross-codec, and noise robustness experiments are reported separately.
+\subsection{Data and Split Audit}
+The supplied CSV manifests contain audio locations and labels. The observed dataset has 3,295 training recordings (1,615 human and 1,680 AI), 412 validation recordings (202 human and 210 AI), and 412 test recordings (202 human and 210 AI). Exact path overlap, missing files, and cross-split duplicate hashes were not found by the split-audit script. Optional speaker, source-recording, and generator metadata produced empty overlap reports; this means that metadata-based disjointness was not demonstrated and must not be claimed.
 
-\subsection{Metrics}
-We report equal error rate (EER), minimum detection cost function (minDCF), ROC-AUC, precision, recall, F1, false-alarm rate at 90\%, 95\%, and 99\% spoof recall, Brier score, expected calibration error, detection delay, false alarms per hour, throughput, memory, and p50/p95/p99 processing latency. Confidence intervals are computed by grouped bootstrap at the speaker, source, or call level. Test data are not used for threshold selection.
+The reported classifier was trained only on the training manifest, calibrated on validation data, and evaluated once on the test manifest. The test set was not used to select thresholds. Generator-disjoint, leave-one-generator-out, cross-dataset, cross-accent, cross-codec, and noise robustness evaluation are implemented as experiment targets but were not available for this report.
 
-\subsection{Ablations}
-Planned ablations compare DSP-only, neural-only, weighted fusion, calibrated fusion, and sequential fusion. DSP ablations include spectral, phase, pitch, Fourier, and pause-proxy subsets. Additional experiments vary window length, hop size, calibration, and evidence-discount factors.
+\subsection{Metrics and Reproducibility}
+The pipeline reports EER, minDCF, false-alarm rate at 90\%, 95\%, and 99\% spoof recall, Brier score, ECE, score distributions, confusion matrices, detection delay, throughput, and latency percentiles. The reported training seed is 42. Configurations, checkpoints, calibration parameters, and evaluation JSON are stored as separate artifacts. Synthetic fixture results are excluded from the research metrics.
 
 \section{Results}
-\textbf{This section is intentionally a placeholder until the authors run the real train, validation, test, and unseen-generator experiments.} Values from synthetic fixtures or debugging runs must not be reported as research evidence.
+Table~\ref{tab:results} reports the measured LCNN baseline on the available held-out split. Validation training reached EER 0.00486 in the first recorded epoch and 0.00 by the third recorded epoch; early stopping completed eight recorded epochs and retained the best checkpoint. The final reported training loss at the eighth recorded epoch was 0.01851. These rapidly saturated scores warrant additional leakage, generator, and channel-shift checks before publication claims are made.
 
 \begin{table}[t]
 \centering
-\caption{Primary held-out test results. Replace placeholders only with reproducible experiment outputs.}
-\label{tab:primary-results}
-\begin{tabular}{lcccccc}
+\caption{Measured results for the configured baseline CNN/LCNN. The split is not a zero-day or cross-dataset evaluation.}
+\label{tab:results}
+\small
+\begin{tabular}{lc}
 \toprule
-System & EER & minDCF & ROC-AUC & Brier & ECE & FA@99\\
+Metric & Test result\\
 \midrule
-DSP-only & TBD & TBD & TBD & TBD & TBD & TBD\\
-CNN baseline & TBD & TBD & TBD & TBD & TBD & TBD\\
-XLS-R/AASIST & TBD & TBD & TBD & TBD & TBD & TBD\\
-Hybrid sequential & TBD & TBD & TBD & TBD & TBD & TBD\\
+EER & 0.00000\\
+minDCF & 0.00000\\
+FAR at 90/95/99\% spoof recall & 0.00000 / 0.00000 / 0.00000\\
+Brier score & 0.00936\\
+ECE & 0.01683\\
+Mean human score & 0.03437\\
+Mean AI score & 0.99996\\
+Test human / AI count & 202 / 210\\
 \bottomrule
 \end{tabular}
 \end{table}
 
-\section{Deployment Considerations}
-The reference deployment uses a containerized FastAPI service on GPU-capable ECS EC2 instances behind an Application Load Balancer. Terraform variables control region, subnets, source security groups, instance type, artifact bucket, model checkpoint URI, and optional ACM certificate. A deployment circuit breaker enables rollback of unhealthy revisions. A managed SageMaker real-time endpoint is an alternative: ECS provides more direct control of long-lived WebSocket behavior and GPU capacity, while SageMaker reduces infrastructure management at the cost of endpoint constraints and managed-service coupling.
+Temperature scaling fitted on validation data produced temperature $T=1.32070$ and validation ECE 0.02186. The stored operating thresholds were no-action $0.00000$, silent-flag $0.28510$, and play-warning $0.86421$, selected with a target bona fide false-alarm rate of 1\%. On the test split, score range was approximately $3.0\times10^{-7}$ to 1.0. The separation is encouraging for this split, but the absence of generator and speaker metadata prevents a zero-day or speaker-disjoint interpretation.
 
-\section{Limitations and Ethical Considerations}
-Acoustic artifacts vary by codec, device, language, accent, and recording environment. A detector may fail on unseen generators or produce false alarms for legitimate signal transformations. Pause and pitch features do not constitute medical or physiological measurements. High-risk scores should support human or policy-controlled verification rather than automatically denying service. The system requires privacy review, authorized deployment, and monitoring for demographic and channel-specific error differences.
+\section{Limitations and Research Plan}
+The current results do not establish generalization to unseen cloning generators, languages, accents, codecs, packet loss, or real calls. The metadata audit cannot verify speaker/source disjointness because the supplied manifests did not expose those fields. The high separation may reflect dataset or recording-condition cues; future work will inspect source provenance, train leave-one-generator-out models, add grouped bootstrap confidence intervals, and perform codec/noise/packet-loss robustness tests. The CNN baseline is not the final research model. XLS-R fine-tuning, learned layer selection, graph-attention fusion, ONNX/TorchScript benchmarking, and measured p50/p95/p99 end-to-end latency remain future experiments.
+
+Acoustic pause, pitch, and spectral features are not physiological evidence. High-risk predictions should trigger human or policy-controlled verification, not automatic denial. All demonstrations must use authorized recordings, and production deployments must control swap, crash dumps, tracing, retention, and access to operational metadata.
 
 \section{Conclusion}
-This paper presents a reproducible architecture for detecting voice-cloning impersonation attacks in live VoIP calls. The design combines DSP evidence, trainable CNN and XLS-R/AASIST-compatible detectors, calibration, dependence-aware sequential risk, privacy-preserving streaming, and GPU deployment interfaces. The central empirical questions---generalization to unseen generators, calibration under channel shift, false alarms in realistic calls, and end-to-end latency---remain to be answered with the authors' real dataset and controlled experiments.
+We implemented a reproducible voice-cloning detection foundation with Fourier/DSP processing, a trainable LCNN baseline, temperature calibration, dependence-aware sequential risk, a GPU-backed FastAPI service, and an offline RTP-like demonstration. The observed held-out split produced perfect separation for the baseline, with calibrated Brier score 0.00936 and ECE 0.01683. These are preliminary split-specific measurements rather than evidence of zero-day robustness. The next scientific step is a grouped, generator-disjoint evaluation with channel transformations and the selected deep-learning model, followed by latency and false-alarm validation in authorized VoIP conditions.
 
 \section*{Acknowledgment}
 The authors may add funding, laboratory, infrastructure, or dataset acknowledgments here.
 
-\bibliographystyle{IEEEtran}
 \begin{thebibliography}{00}
 \bibitem{wav2vec2} A. Baevski, H. Zhou, A. Mohamed, and M. Auli, ``wav2vec 2.0: A framework for self-supervised learning of speech representations,'' in \emph{Proc. NeurIPS}, 2020.
 \bibitem{xlsr} A. Conneau \emph{et al.}, ``Unsupervised cross-lingual representation learning for speech recognition,'' in \emph{Proc. Interspeech}, 2021.

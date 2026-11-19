@@ -25,6 +25,7 @@ Usage: ./start.sh [command]
 
 Commands:
   start       Start the FastAPI inference backend (default)
+  demo        Start FastAPI and Next.js for the local/SSH demo
   stop        Stop local processes and Docker Compose services
   status      Show local process and Docker Compose status
   tunnel      Forward API and frontend ports from a GPU host over SSH
@@ -191,8 +192,12 @@ main() {
     status) status_all ;;
     tunnel) run_tunnel ;;
     simulate) run_simulation "$@" ;;
-    start)
+    start|demo)
       load_environment
+      if [[ "$command" == "demo" ]]; then
+        START_FRONTEND=1
+        START_INFRA="${START_INFRA:-0}"
+      fi
       trap cleanup EXIT INT TERM
       start_infrastructure
       start_backend
