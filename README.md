@@ -160,8 +160,4 @@ The reported baseline is an LCNN configuration. XLS-R/AASIST interfaces are prep
 
 ## Development notes
 
-- Raw audio is processed in memory and is not written to application logs, Redis, MongoDB, or MLflow artifacts.
-- The browser demo uses uploaded recordings and an RTP-like simulation; it does not alter real calls.
-- Do not commit `.env`, credentials, SSH keys, datasets, raw recordings, checkpoints, or calibration secrets.
-- AWS/Terraform files are prepared for later deployment. No cloud resources are created automatically.
-- Full project documentation is in `docs/`, and the IEEE manuscript is `paper/voice_deepfake_ieee.tex`.
+ECS EC2 GPU provides control over GPU instance capacity, WebSocket behavior, and cost tuning, but requires AMI, autoscaling, patching, and capacity management. SageMaker real-time endpoints provide managed model deployment and autoscaling, but introduce endpoint packaging constraints, per-endpoint cost, and a less direct fit for long-lived bidirectional WebSocket sessions. The checked-in Terraform defaults to parameterized ECS EC2 GPU resources; no AWS resources are created automatically. 
