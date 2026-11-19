@@ -1,57 +1,167 @@
-# AI-Powered Real-Time Detection and Prevention of Voice Cloning Impersonation Attacks
+# VoiceGuard: Real-Time Voice Deepfake Detection
 
-This repository contains a production-oriented DSP-only research foundation:
+VoiceGuard is a research and demonstration system for detecting synthetic speech in authorized VoIP-style streams. It accepts 16-kHz mono audio, forms three-second rolling windows, runs the configured GPU model, and returns a calibrated spoof probability and risk tier.
 
-- FastAPI REST and WebSocket APIs under `/api/v1`.
-- Validated 8/16/48 kHz audio, bounded RAM-only buffers, 3-second sliding windows, and energy VAD.
-- Deterministic FFT/STFT, spectral, Mel/DCT, pitch-proxy, phase, and speech-activity features.
-- Trainable scikit-learn DSP detector, calibration utility, weighted fusion, and discounted Bayesian risk.
-- Grouped manifest/split and evaluation metric utilities.
-- Optional ONNX and ZenML boundaries without a deep model or synthetic research results.
-- Docker Compose services for API, Redis, MongoDB, and MLflow.
-
-The deep-learning backbone, remote SSH dataset access, AWS provisioning, and frontend are intentionally deferred. No raw audio is persisted. See the `docs/` directory.
-
-## Quick start
-
-```bash
-python -m venv .venv
-. .venv/bin/activate
-python -m pip install -r requirements-core.txt
-uvicorn app.main:app --reload
-```
-
-Then open `http://localhost:8000/docs`. For local infrastructure use `docker compose up --build`.
-
-## Train the detector
-
-Create `data/manifest.csv` with `location,label`, where `0` is human and `1` is AI:
-
-```bash
-python -m pip install -r requirements-core.txt -r requirements-ml.txt
-python scripts/train_neural.py --config configs/train.yaml --device cuda
-python scripts/calibrate_neural.py --config configs/train.yaml --checkpoint artifacts/checkpoints/best.pt
-python scripts/evaluate_neural.py --config configs/train.yaml --checkpoint artifacts/checkpoints/best.pt --calibration artifacts/calibration/calibration.json
-```
-
-Select `xlsr_aasist` in `configs/train.yaml` to download the Hugging Face XLS-R checkpoint. Keep the checkpoint revision/cache controlled for reproducibility.
+The current demonstration is offline: it does not dial a phone, contact DotVoice, inject packets into a live RTP stream, or persist raw audio. The browser uploads a human or AI recording in memory, packetizes it into 20-ms RTP-like frames, sends rolling PCM16 windows to the GPU backend, and displays packet events, model output, tier, model version, and latency.
 
 ## Architecture
 
 ```mermaid
 flowchart LR
-  A[PCM16 VoIP audio] --> B[Validation / resample]
-  B --> C[3 second VAD window]
-  C --> D{Model config}
-  D --> E[LCNN or ResNet STFT baseline]
-  D --> F[XLS-R all-layer weighted sum]
-  F --> G[AASIST-style graph head]
-  E --> H[Calibrated score]
-  G --> H
-  H --> I[Threshold policy]
-  I --> J[No action / silent flag / warning]
+  L[Laptop browser / Next.js] -->|SSH tunnel localhost:8000| G[GPU FastAPI backend]
+  G --> V[Validation and 16-kHz PCM conversion]
+  V --> W[3-second rolling windows]
+  W --> M[CUDA model checkpoint]
+  M --> R[Score, tier, latency]
+  R --> L
 ```
 
-## Deployment trade-off
+The frontend runs on the laptop because Node.js dependencies are not installed on the GPU machine. Python, PyTorch, the checkpoint, and inference remain on the GPU machine.
 
-ECS EC2 GPU provides control over GPU instance capacity, WebSocket behavior, and cost tuning, but requires AMI, autoscaling, patching, and capacity management. SageMaker real-time endpoints provide managed model deployment and autoscaling, but introduce endpoint packaging constraints, per-endpoint cost, and a less direct fit for long-lived bidirectional WebSocket sessions. The checked-in Terraform defaults to parameterized ECS EC2 GPU resources; no AWS resources are created automatically.
+## One-time setup
+
+### GPU machine
+
+```bash
+cd ~/noidea
+source .venv/bin/activate
+python -m pip install -e .
+
+export MODEL_CHECKPOINT=artifacts/checkpoints/best.pt
+export MODEL_CONFIG_PATH=configs/model.yaml
+export THRESHOLDS_PATH=artifacts/calibration/thresholds.json
+export MODEL_DEVICE=cuda
+export ALLOWED_ORIGINS=http://localhost:3000
+```
+
+### Laptop
+
+Copy or clone this repository on the laptop. Only the frontend dependencies are required there:
+
+```bash
+cd ~/noidea/frontend
+npm install
+```
+
+The laptop does not need CUDA, PyTorch, Redis, MongoDB, or the model checkpoint.
+
+## Run the split demo
+
+### 1. Start the backend on the GPU machine
+
+```bash
+cd ~/noidea
+source .venv/bin/activate
+./start.sh
+```
+
+The backend listens on GPU port `8000` and writes logs to `logs/backend.log`.
+
+Verify it on the GPU machine:
+
+```bash
+curl http://127.0.0.1:8000/healthz
+curl http://127.0.0.1:8000/readyz
+```
+
+`/readyz` should report `"model_loaded": true`. If it does not, check the three model environment variables above.
+
+### 2. Forward the backend port to the laptop
+
+Run this on the laptop and keep it open:
+
+```bash
+ssh -N -L 8000:127.0.0.1:8000 muthu@GPU_MACHINE_IP
+```
+
+Or use the launcher:
+
+```bash
+GPU_SSH_TARGET=muthu@GPU_MACHINE_IP ./start.sh tunnel
+```
+
+Test the tunnel on the laptop:
+
+```bash
+curl http://127.0.0.1:8000/healthz
+```
+
+### 3. Start the frontend on the laptop
+
+In a second laptop terminal:
+
+```bash
+cd ~/noidea
+NEXT_PUBLIC_API_BASE_URL=http://localhost:8000 ./start.sh frontend
+```
+
+The frontend opens at:
+
+```text
+http://localhost:3000
+```
+
+Upload a human or AI audio file, select the matching voice path, and click **Execute simulation**. Audio is decoded and resampled in the browser, then sent to the GPU as rolling three-second PCM16 windows.
+
+## Launcher commands
+
+```bash
+./start.sh              # GPU/backend only
+./start.sh frontend     # laptop/frontend only
+./start.sh tunnel       # SSH-forward GPU API; requires GPU_SSH_TARGET
+./start.sh demo         # optional: backend and frontend on one machine
+./start.sh status       # health and process status
+./start.sh stop         # stop local processes
+```
+
+The default launcher does not start Next.js, Docker, Redis, MongoDB, or MLflow. Optional infrastructure can be enabled with `START_INFRA=1`, but it is not required for the local inference demonstration.
+
+## API quick reference
+
+```bash
+curl http://localhost:8000/healthz
+curl http://localhost:8000/readyz
+curl http://localhost:8000/docs
+```
+
+The model endpoint requires exactly three seconds of PCM16 audio:
+
+```bash
+dd if=/path/to/three_seconds.pcm of=/tmp/chunk.pcm bs=1 count=96000
+curl -X POST http://localhost:8000/score \
+  -H 'Content-Type: application/octet-stream' \
+  -H 'X-Sample-Rate: 16000' \
+  --data-binary @/tmp/chunk.pcm
+```
+
+The response contains `score`, `tier`, `model_version`, and `latency_ms`. Raw scores can be hidden with `HIDE_RAW_SCORES=true`.
+
+## Training and evaluation
+
+The dataset CSV must contain `Location`/`Label` or `location`/`label`; labels are `0=human` and `1=AI`:
+
+```bash
+python scripts/train_neural.py --config configs/train.yaml \
+  --train-csv /path/train.csv \
+  --validation-csv /path/validation.csv \
+  --device cuda
+
+python scripts/calibrate_neural.py --config configs/train.yaml \
+  --checkpoint artifacts/checkpoints/best.pt \
+  --csv /path/validation.csv --device cuda
+
+python scripts/evaluate_neural.py --config configs/train.yaml \
+  --checkpoint artifacts/checkpoints/best.pt \
+  --csv /path/test.csv \
+  --calibration artifacts/calibration/calibration.json --device cuda
+```
+
+The reported baseline is an LCNN configuration. XLS-R/AASIST interfaces are prepared but were not used for the reported results. Do not treat the current held-out split result as zero-day evidence until generator-, speaker-, source-, codec-, and dataset-disjoint experiments are complete.
+
+## Development notes
+
+- Raw audio is processed in memory and is not written to application logs, Redis, MongoDB, or MLflow artifacts.
+- The browser demo uses uploaded recordings and an RTP-like simulation; it does not alter real calls.
+- Do not commit `.env`, credentials, SSH keys, datasets, raw recordings, checkpoints, or calibration secrets.
+- AWS/Terraform files are prepared for later deployment. No cloud resources are created automatically.
+- Full project documentation is in `docs/`, and the IEEE manuscript is `paper/voice_deepfake_ieee.tex`.
