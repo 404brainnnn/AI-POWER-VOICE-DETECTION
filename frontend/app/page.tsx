@@ -1,53 +1,114 @@
 "use client";
 
-import { FormEvent, useEffect, useState } from "react";
-
-type Call = { call_id: string; status: string; mode: string; to: string };
-type EventItem = { event: string; status?: string; risk_tier?: string; score?: number | null; timestamp: string };
+import { useRef, useState } from "react";
 
 const API = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000";
+const SAMPLE_RATE = 16_000;
+const FRAME_MS = 20;
+const FRAME_SAMPLES = (SAMPLE_RATE * FRAME_MS) / 1000;
+const WINDOW_SAMPLES = SAMPLE_RATE * 3;
+
+type Mode = "human" | "ai";
+type Phase = "idle" | "streaming" | "complete" | "error";
+type StreamEvent = { id: number; time: string; kind: string; detail: string; tone?: "accent" | "warning" | "ok" };
+type ScoreResult = { score: number | null; tier: string; model_version: string; latency_ms: number };
+
+const sleep = (milliseconds: number) => new Promise((resolve) => window.setTimeout(resolve, milliseconds));
+
+function resampleMono(source: Float32Array, sourceRate: number): Float32Array {
+  if (sourceRate === SAMPLE_RATE) return new Float32Array(source);
+  const outputLength = Math.round(source.length * SAMPLE_RATE / sourceRate);
+  const output = new Float32Array(outputLength);
+  for (let i = 0; i < output.length; i += 1) {
+    const position = i * sourceRate / SAMPLE_RATE;
+    const left = Math.floor(position);
+    const right = Math.min(left + 1, source.length - 1);
+    const fraction = position - left;
+    output[i] = source[left] * (1 - fraction) + source[right] * fraction;
+  }
+  return output;
+}
+
+function pcm16Bytes(samples: Float32Array): ArrayBuffer {
+  const output = new Int16Array(samples.length);
+  for (let i = 0; i < samples.length; i += 1) output[i] = Math.max(-32768, Math.min(32767, Math.round(samples[i] * 32767)));
+  return output.buffer;
+}
 
 export default function Home() {
-  const [number, setNumber] = useState("");
-  const [mode, setMode] = useState<"human" | "synthetic">("synthetic");
-  const [consent, setConsent] = useState(false);
-  const [call, setCall] = useState<Call | null>(null);
-  const [events, setEvents] = useState<EventItem[]>([]);
-  const [busy, setBusy] = useState(false);
+  const [mode, setMode] = useState<Mode>("ai");
+  const [humanFile, setHumanFile] = useState<File | null>(null);
+  const [aiFile, setAiFile] = useState<File | null>(null);
+  const [phase, setPhase] = useState<Phase>("idle");
+  const [events, setEvents] = useState<StreamEvent[]>([]);
+  const [score, setScore] = useState<ScoreResult | null>(null);
+  const [packetCount, setPacketCount] = useState(0);
+  const [windowCount, setWindowCount] = useState(0);
   const [error, setError] = useState("");
+  const runId = useRef(0);
 
-  useEffect(() => {
-    if (!call) return;
-    const timer = window.setInterval(async () => {
-      const response = await fetch(`${API}/api/v1/calls/${call.call_id}/events`);
-      if (response.ok) setEvents(await response.json());
-    }, 1500);
-    return () => window.clearInterval(timer);
-  }, [call]);
-
-  async function dial(event: FormEvent) {
-    event.preventDefault(); setError(""); setBusy(true);
-    try {
-      const response = await fetch(`${API}/api/v1/calls`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ to: number, mode, consent_confirmed: consent }) });
-      const body = await response.json();
-      if (!response.ok) throw new Error(body.detail ?? "Call could not be created");
-      setCall(body); setEvents([]);
-    } catch (reason) { setError(reason instanceof Error ? reason.message : "Call could not be created"); }
-    finally { setBusy(false); }
+  function addEvent(kind: string, detail: string, tone?: StreamEvent["tone"]) {
+    setEvents((current) => [{ id: Date.now() + current.length, time: new Date().toLocaleTimeString(), kind, detail, tone }, ...current].slice(0, 18));
   }
 
-  const latestRisk = [...events].reverse().find((item) => item.event === "risk_update");
+  async function executeSimulation() {
+    const thisRun = runId.current + 1;
+    runId.current = thisRun;
+    setPhase("streaming"); setError(""); setEvents([]); setScore(null); setPacketCount(0); setWindowCount(0);
+    const selectedFile = mode === "ai" ? aiFile : humanFile;
+    if (!selectedFile) { setPhase("error"); setError(`Upload a ${mode === "ai" ? "AI" : "human"} voice file first`); return; }
+    try {
+      const health = await fetch(`${API}/healthz`);
+      if (!health.ok) throw new Error("Detector backend is not ready");
+      const audioContext = new AudioContext();
+      const decoded = await audioContext.decodeAudioData(await selectedFile.arrayBuffer());
+      const source = decoded.getChannelData(0);
+      const waveform = resampleMono(source, decoded.sampleRate);
+      await audioContext.close();
+      if (waveform.length < WINDOW_SAMPLES) throw new Error("Audio must contain at least 3 seconds of speech");
+      addEvent("simulation_started", `${mode === "ai" ? "AI" : "human"} upload: ${selectedFile.name}`, "ok");
+      const frames: Float32Array[] = [];
+      const totalFrames = Math.ceil(waveform.length / FRAME_SAMPLES);
+      for (let frameNumber = 0; frameNumber < totalFrames; frameNumber += 1) {
+        if (runId.current !== thisRun) return;
+        const frame = new Float32Array(FRAME_SAMPLES);
+        frame.set(waveform.subarray(frameNumber * FRAME_SAMPLES, Math.min((frameNumber + 1) * FRAME_SAMPLES, waveform.length)));
+        frames.push(frame);
+        const packetNumber = frameNumber + 1;
+        setPacketCount(packetNumber);
+        if (packetNumber % 10 === 0) addEvent("packet_received", `RTP-like packet ${packetNumber} delivered`, "ok");
+        if (frames.length >= WINDOW_SAMPLES / FRAME_SAMPLES && packetNumber % (1000 / FRAME_MS) === 0) {
+          const window = new Float32Array(WINDOW_SAMPLES);
+          frames.slice(-WINDOW_SAMPLES / FRAME_SAMPLES).forEach((frame, index) => window.set(frame, index * FRAME_SAMPLES));
+          setWindowCount((current) => current + 1);
+          addEvent("window_ready", "3.0 s speech window sent to detector");
+          const response = await fetch(`${API}/score`, { method: "POST", headers: { "Content-Type": "application/octet-stream", "X-Sample-Rate": String(SAMPLE_RATE) }, body: pcm16Bytes(window) });
+          const body = await response.json();
+          if (!response.ok) throw new Error(body.detail ?? "Model inference failed");
+          const result = body as ScoreResult;
+          setScore(result);
+          addEvent("model_result", `${result.tier} · ${result.score == null ? "score hidden" : `${(result.score * 100).toFixed(1)}% spoof probability`} · ${result.latency_ms.toFixed(1)} ms`, "accent");
+          addEvent("packet_inserted", "simulated control packet inserted after decision", "warning");
+        }
+        await sleep(FRAME_MS);
+      }
+      if (runId.current === thisRun) { setPhase("complete"); addEvent("simulation_complete", "offline VoIP stream finished", "ok"); }
+    } catch (reason) {
+      if (runId.current !== thisRun) return;
+      setPhase("error"); setError(reason instanceof TypeError ? `Cannot reach detector at ${API}. Check the SSH port-forward.` : reason instanceof Error ? reason.message : "Simulation failed"); addEvent("simulation_error", "detector request failed", "warning");
+    }
+  }
+
+  function stopSimulation() { runId.current += 1; setPhase("idle"); addEvent("simulation_stopped", "stream stopped by operator", "warning"); }
+  const riskTier = score?.tier?.replaceAll("_", " ") ?? "waiting";
 
   return <main className="shell">
-    <nav className="topbar"><div className="brand"><span className="brand-dot" />voiceguard</div><div className="nav-meta"><span className="live-dot" />authorized demo console <span className="env-pill">LOCAL</span></div></nav>
-    <section className="hero"><div className="eyebrow">REAL-TIME VOICE SECURITY / 01</div><h1>See the signal<br /><em>behind the voice.</em></h1><p className="lede">Place an authorized test call, choose a reference voice mode, and watch the detector accumulate evidence across the live stream.</p></section>
+    <nav className="topbar"><div className="brand"><span className="brand-dot" />voiceguard</div><div className="nav-meta"><span className="live-dot" />offline voip lab <span className="env-pill">GPU MODEL</span></div></nav>
+    <section className="hero"><div className="eyebrow">REAL-TIME VOICE SECURITY / SIMULATION</div><h1>See the signal<br /><em>inside the stream.</em></h1><p className="lede">Run a disclosed Human or AI voice fixture through an RTP-like packet stream and watch the trained detector score rolling three-second windows.</p></section>
     <section className="workspace">
-      <form className="panel dial-panel" onSubmit={dial}><div className="panel-kicker">01 / START A TEST CALL</div><h2>Dial a number</h2><label className="field-label" htmlFor="phone">Destination number</label><input id="phone" value={number} onChange={(event) => setNumber(event.target.value)} placeholder="+91 98765 43210" required />
-        <div className="mode-heading"><span className="field-label">Voice mode</span><span className="mode-note">provider-controlled</span></div><div className="mode-grid"><button type="button" className={mode === "human" ? "mode selected" : "mode"} onClick={() => setMode("human")}><span className="mode-icon">◌</span><span><strong>Human reference</strong><small>Reference speech path</small></span></button><button type="button" className={mode === "synthetic" ? "mode selected synthetic" : "mode synthetic"} onClick={() => setMode("synthetic")}><span className="mode-icon">✦</span><span><strong>Synthetic demo</strong><small>Disclosed AI test path</small></span></button></div>
-        <label className="consent"><input type="checkbox" checked={consent} onChange={(event) => setConsent(event.target.checked)} /><span>I own or have permission to call this number for testing.</span></label><button className="dial-button" disabled={busy || !consent}>{busy ? "Connecting…" : "Start authorized call"}<span>↗</span></button>{error && <p className="error">{error}</p>}<p className="microcopy">API credentials remain server-side. The dashboard never receives the DotVoice key.</p>
-      </form>
-      <section className="panel signal-panel"><div className="panel-kicker">02 / DETECTION TELEMETRY</div><div className="signal-header"><div><h2>Live signal</h2><p>{call ? `Call ${call.call_id}` : "Waiting for a test call"}</p></div><div className={`status ${call ? "active" : ""}`}><span />{call ? call.status : "idle"}</div></div><div className="risk-card"><div className="risk-label">CURRENT RISK TIER</div><div className="risk-value">{latestRisk?.risk_tier?.replace("_", " ") ?? "—"}</div><div className="risk-score">{latestRisk?.score != null ? `${(latestRisk.score * 100).toFixed(1)}% synthetic probability` : "A score appears after three seconds of speech"}</div></div><div className="timeline">{events.length === 0 ? <div className="empty-state"><div className="pulse-ring" /><p>No signal events yet.</p><small>Start a call to populate the stream.</small></div> : events.slice(-6).reverse().map((item, index) => <div className="event-row" key={`${item.timestamp}-${index}`}><span className="event-time">{new Date(item.timestamp).toLocaleTimeString()}</span><span className={`event-marker ${item.risk_tier ?? ""}`} /><span>{item.event.replaceAll("_", " ")}</span><b>{item.risk_tier?.replace("_", " ") ?? item.status ?? ""}</b></div>)}</div></section>
+      <section className="panel dial-panel"><div className="panel-kicker">01 / CONFIGURE THE STREAM</div><h2>Choose a voice path</h2><div className="field-label">Input recording</div><div className="mode-grid"><button type="button" className={mode === "human" ? "mode selected" : "mode"} onClick={() => setMode("human")} disabled={phase === "streaming"}><span className="mode-icon">◌</span><span><strong>Human voice</strong><small>{humanFile?.name ?? "Select reference audio"}</small></span></button><button type="button" className={mode === "ai" ? "mode selected synthetic" : "mode synthetic"} onClick={() => setMode("ai")} disabled={phase === "streaming"}><span className="mode-icon">✦</span><span><strong>AI voice</strong><small>{aiFile?.name ?? "Select synthetic audio"}</small></span></button></div><label className="upload-field">Upload human voice<input type="file" accept="audio/*" onChange={(event) => setHumanFile(event.target.files?.[0] ?? null)} disabled={phase === "streaming"} /></label><label className="upload-field">Upload AI voice<input type="file" accept="audio/*" onChange={(event) => setAiFile(event.target.files?.[0] ?? null)} disabled={phase === "streaming"} /></label><div className="sim-specs"><div><span>PACKET SIZE</span><b>20 ms</b></div><div><span>WINDOW</span><b>3.0 s</b></div><div><span>HOP</span><b>1.0 s</b></div></div><button className="dial-button" onClick={executeSimulation} disabled={phase === "streaming"}>{phase === "streaming" ? "Streaming…" : "Execute simulation"}<span>↗</span></button>{phase === "streaming" && <button className="stop-button" onClick={stopSimulation}>Stop stream</button>}{error && <p className="error">{error}</p>}<p className="microcopy">Audio is decoded in memory, packetized locally, and sent to the GPU detector as rolling PCM16 windows. No phone call is made.</p></section>
+      <section className="panel signal-panel"><div className="panel-kicker">02 / LIVE DETECTION TELEMETRY</div><div className="signal-header"><div><h2>Packet stream</h2><p>{phase === "idle" ? "Ready for execution" : `${mode === "ai" ? "AI" : "Human"} fixture · ${phase}`}</p></div><div className={`status ${phase === "streaming" ? "active" : ""}`}><span />{phase}</div></div><div className="risk-card"><div className="risk-label">MODEL DECISION</div><div className="risk-value">{riskTier}</div><div className="risk-score">{score?.score == null ? "Score appears after the first complete window" : `${(score.score * 100).toFixed(2)}% calibrated spoof probability · ${score.model_version}`}</div></div><div className="stream-stats"><div><span>PACKETS</span><b>{packetCount}</b></div><div><span>WINDOWS SCORED</span><b>{windowCount}</b></div><div><span>INFERENCE</span><b>{score ? `${score.latency_ms.toFixed(1)} ms` : "—"}</b></div></div><div className="timeline">{events.length === 0 ? <div className="empty-state"><div className="pulse-ring" /><p>No stream events yet.</p><small>Choose a voice path and execute the simulation.</small></div> : events.map((item) => <div className="event-row" key={item.id}><span className="event-time">{item.time}</span><span className={`event-marker ${item.tone ?? ""}`} /><span>{item.kind.replaceAll("_", " ")}</span><b>{item.detail}</b></div>)}</div></section>
     </section>
-    <footer><span>VOICEGUARD / DOTVOICE ADAPTER</span><span>Human review recommended for every high-risk event.</span></footer>
+    <footer><span>VOICEGUARD / OFFLINE RTP-LIKE SIMULATION</span><span>Packets are simulated; model output is produced by the configured GPU runtime.</span></footer>
   </main>;
 }
